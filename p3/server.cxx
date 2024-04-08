@@ -11,6 +11,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <time.h>
+#include <sstream>
 // #include <system_error>
 void error(const char *msg)
 {
@@ -23,10 +24,6 @@ std::thread *threads[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
 sockaddr_in *addresses[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
 int fileDescriptors[] = {-1, -1, -1, -1, -1};
 bool executing[5];
-
-std::vector<std::string> questions;
-std::vector<std::vector<std::string>> answers;
-std::vector<char> solutions;
 // lets the process kill itself gracefully
 void sigint_handler(int signal)
 {
@@ -42,7 +39,7 @@ void sigint_handler(int signal)
         {
             try
             {
-                // std::cout << "Joining thread " << i << std::endl;
+                std::cout << "Joining thread " << i << std::endl;
                 threads[i]->join();
             }
             catch (...)
@@ -50,7 +47,7 @@ void sigint_handler(int signal)
             }
             try
             {
-                // std::cout << "Deleting thread " << i << std::endl;
+                std::cout << "Deleting thread " << i << std::endl;
                 delete threads[i];
             }
             catch (...)
@@ -63,7 +60,7 @@ void sigint_handler(int signal)
         {
             try
             {
-                // std::cout << "Deleting address " << i << std::endl;
+                std::cout << "Deleting address " << i << std::endl;
                 delete addresses[i];
             }
             catch (...)
@@ -76,8 +73,7 @@ void sigint_handler(int signal)
         {
             try
             {
-
-                // std::cout << "Closing FD " << i << ": " << fileDescriptors[i] << std::endl;
+                std::cout << "Closing FD " << i << ": " << fileDescriptors[i] << std::endl;
                 close(fileDescriptors[i]);
             }
             catch (...)
@@ -86,40 +82,13 @@ void sigint_handler(int signal)
             fileDescriptors[i] = -1;
         }
     }
-    // std::cout << "Closing main FD " << std::endl;
+    std::cout << "Closing main FD " << std::endl;
     int mainCloseStatus = close(socketFD);
 
-    // std::cout << "Closed with response " << mainCloseStatus << std::endl;
+    std::cout << "Closed with response " << mainCloseStatus << std::endl;
     exit(signal);
 }
-void constructQuestions()
-{
-    std::ifstream questionFile("questions.txt");
-    std::string line;
-    char answerNumber = 0;
-    char lineType;
-    while (std::getline(questionFile, line))
-    {
-        lineType = line[0];
-        line.erase(0, 1);
-        if (lineType == '?')
-        {
-            questions.push_back(line);
-            answers.push_back(std::vector<std::string>());
-            answerNumber = 0;
-            continue;
-        }
-        char prefix[] = {answerNumber + 65, ' ', '\0'};
-        line.insert(0, prefix);
-        answers[answers.size() - 1].push_back(line);
-        if (lineType == '+')
-        {
-            solutions.push_back(answerNumber + 65);
-        }
-        ++answerNumber;
-    }
-    questionFile.close();
-}
+
 int readInput(int fd, char *input, int len)
 {
     int index = 0;
@@ -141,6 +110,116 @@ int readInput(int fd, char *input, int len)
     // std::cout << (input[index] + 0) << std::endl;
     return totalRead;
 }
+bool decode(char c)
+{
+    bool prevCR = false;
+    switch (c)
+    {
+    case 32:
+        std::cout << "[SP]";
+        break;
+    case 0:
+        std::cout << "[NULL]";
+        break;
+    case 1:
+        std::cout << "[SOH]";
+        break;
+    case 2:
+        std::cout << "[STX]";
+        break;
+    case 3:
+        std::cout << "[ETX]";
+        break;
+    case 4:
+        std::cout << "[EOT]";
+        break;
+    case 5:
+        std::cout << "[ENQ]";
+        break;
+    case 6:
+        std::cout << "[ACK]";
+        break;
+    case 7:
+        std::cout << "[BEL]";
+        break;
+    case 8:
+        std::cout << "[BS]";
+        break;
+    case 9:
+        std::cout << "[HT]";
+        break;
+    case 10:
+        std::cout << "[LF]";
+        break;
+    case 11:
+        std::cout << "[VT]";
+        break;
+    case 12:
+        std::cout << "[FF]";
+        break;
+    case 13:
+        prevCR = true;
+        break;
+    case 14:
+        std::cout << "[SO]";
+        break;
+    case 15:
+        std::cout << "[SI]";
+        break;
+    case 16:
+        std::cout << "[DLE]";
+        break;
+    case 17:
+        std::cout << "[DC1]";
+        break;
+    case 18:
+        std::cout << "[DC2]";
+        break;
+    case 19:
+        std::cout << "[DC3]";
+        break;
+    case 20:
+        std::cout << "[DC4]";
+        break;
+    case 21:
+        std::cout << "[NAK]";
+        break;
+    case 22:
+        std::cout << "[SYN]";
+        break;
+    case 23:
+        std::cout << "[ETB]";
+        break;
+    case 24:
+        std::cout << "[CAN]";
+        break;
+    case 25:
+        std::cout << "[EM]";
+        break;
+    case 26:
+        std::cout << "[SUB]";
+        break;
+    case 27:
+        std::cout << "[ESC]";
+        break;
+    case 28:
+        std::cout << "[FS]";
+        break;
+    case 29:
+        std::cout << "[GS]";
+        break;
+    case 30:
+        std::cout << "[RS]";
+        break;
+    case 31:
+        std::cout << "[US]";
+        break;
+    default:
+        std::cout << c;
+        break;
+    }
+    return prevCR;
+}
 void connectionHandler(int acceptedFD, sockaddr_in *acceptedAddress, bool *terminate, int threadNum, bool *executing)
 {
     srand(time(NULL));
@@ -152,159 +231,143 @@ void connectionHandler(int acceptedFD, sockaddr_in *acceptedAddress, bool *termi
     int readState, writeState;
     bool prevCR = false;
     bool doubleCRLF[2] = {false, false};
+    std::string method;
+    std::string path;
+    std::string protocolVersion;
+    std::string host;
+    std::stringstream request;
+    int responseCode = 200;
+    std::string param("");
+    std::string res;
+    const std::string CRLF = "" + ((char)13) + ((char)10);
     while (!*terminate)
     {
-        bzero(input, 256);
-        readState = read(acceptedFD, input, 255);
-        std::cout << "[" << threadNum << "][" << strAddr << ":" << acceptedAddress->sin_port << "][" << readState << "]: ";
-        for (int index = 0; index < readState; ++index)
+        res = "HTTP/1.1 ";
+        param = "";
+        request.str("");
+        // reading request
+        while (!*terminate)
         {
-            // if end of request headers
+            bzero(input, 256);
+            readState = read(acceptedFD, input, 255);
+            if (readState <= 0)
+            {
+                break;
+            }
+            // append to request
+            request << input;
+            // std::cout << request.str() << std::endl;
+            std::cout << "[" << threadNum << "][" << strAddr << ":" << acceptedAddress->sin_port << "][" << readState << "]: ";
+            for (int index = 0; index < readState; ++index)
+            {
+                // if potential CRLF
+                if (prevCR)
+                {
+                    prevCR = false;
+                    if (input[index] == 10)
+                    {
+                        doubleCRLF[doubleCRLF[0]] = true;
+                        std::cout << "[CRLF" << doubleCRLF[0] << "," << doubleCRLF[1] << "]\n";
+                        // if end of request headers
+                        if (doubleCRLF[1])
+                        {
+                            std::cout << "Double CRLF\n";
+                            break;
+                        }
+                        continue;
+                    }
+                    std::cout << "[CR]";
+                }
+                prevCR = decode(input[index]);
+                // if no possibility of CRLF
+                // only write if doubleCRLF[0] is true
+                // no need to write if doubleCRLF[1], because this code will not execute if that is the case
+                if (!prevCR && doubleCRLF[0])
+                    doubleCRLF[0] = false;
+            }
             if (doubleCRLF[1])
             {
-                doubleCRLF[0] = false;
-                doubleCRLF[1] = false;
                 std::cout << "Double CRLF\n";
                 break;
             }
-            // if potential CRLF
-            if (prevCR)
-            {
-                prevCR = false;
-                if (input[index] == 10)
-                {
-                    std::cout << "[CRLF]\n";
-                    doubleCRLF[doubleCRLF[0]] = true;
-                    continue;
-                }
-                std::cout << "[CR]";
-            }
-            switch (input[index]) {
-                case 32: std::cout << "[SP]"; break;
-                case 0: std::cout << "[NULL]"; break;
-                case 1: std::cout << "[SOH]"; break;
-                case 2: std::cout << "[STX]"; break;
-                case 3: std::cout << "[ETX]"; break;
-                case 4: std::cout << "[EOT]"; break;
-                case 5: std::cout << "[ENQ]"; break;
-                case 6: std::cout << "[ACK]"; break;
-                case 7: std::cout << "[BEL]"; break;
-                case 8: std::cout << "[BS]"; break;
-                case 9: std::cout << "[HT]"; break;
-                case 10: std::cout << "[LF]"; break;
-                case 11: std::cout << "[VT]"; break;
-                case 12: std::cout << "[FF]"; break;
-                case 13: prevCR = true; break;
-                case 14: std::cout << "[SO]"; break;
-                case 15: std::cout << "[SI]"; break;
-                case 16: std::cout << "[DLE]"; break;
-                case 17: std::cout << "[DC1]"; break;
-                case 18: std::cout << "[DC2]"; break;
-                case 19: std::cout << "[DC3]"; break;
-                case 20: std::cout << "[DC4]"; break;
-                case 21: std::cout << "[NAK]"; break;
-                case 22: std::cout << "[SYN]"; break;
-                case 23: std::cout << "[ETB]"; break;
-                case 24: std::cout << "[CAN]"; break;
-                case 25: std::cout << "[EM]"; break;
-                case 26: std::cout << "[SUB]"; break;
-                case 27: std::cout << "[ESC]"; break;
-                case 28: std::cout << "[FS]"; break;
-                case 29: std::cout << "[GS]"; break;
-                case 30: std::cout << "[RS]"; break;
-                case 31: std::cout << "[US]"; break;
-                default: std::cout << input[index]; break;
-            }
-            // if no possibility of CRLF
-            // only write if doubleCRLF[0] is true
-            // no need to write if doubleCRLF[1], because this code will not execute if that is the case
-            if (!prevCR && doubleCRLF[0]) 
-                doubleCRLF[0] = false;
-
         }
-        if (readState <= 0)
+        if (readState == 0)
+            break;
+        std::cout << "Headers:\n"
+                  << request.str() << "EOF\n";
+        // interpret headers
+        request >> method;
+        if (method != "GET")
         {
+            responseCode = 405; // Method not allowed
             break;
         }
-        // input[readState - 2] = '\0';
-        // if (strcmp(input, std::string("die").c_str()) == 0)
-        // {
-        //     *terminate = true;
-        //     kill(getpid(), SIGUSR1);
-        //     // close(socketFD);
-        //     break;
-        // }
-        // // replace CRLF
-        // input[readState - 2] = '\0';
-        // if (strcmp(input, std::string("x").c_str()) == 0)
-        // {
-        //     break;
-        // }
-        // // writeState = write(acceptedFD, "\033[2J", strlen("\033[2J"));
-        // // if (strcmp(input, std::string("c").c_str()) != 0)
-        // // {
-        // //     continue;
-        // // }
-        // // randomly select question and construct formatted message
-        // int qNum = std::rand() % questions.size();
-        // char solution = solutions[qNum];
-        // std::string question = "\033[2J\033[0;0H" + questions[qNum];
-        // // std::cout << question << std::endl;
-        // int a = 0;
-        // char coordinates[] = {27, '[', '0', ';', '0', 'H', '\0'};
-        // for (; a < answers[qNum].size(); ++a)
-        // {
-        //     coordinates[2] = 50 + a;
-        //     coordinates[4] = '4';
-        //     question += coordinates;
-        //     question += answers[qNum][a];
-        // }
-        // coordinates[2] = 50 + a;
-        // coordinates[4] = '0';
-        // question += coordinates;
-        // question += "Answer: ";
 
-        // // std::cout << question << std::endl;
+        request >> path;
 
-        // // writeState = write(acceptedFD, question.c_str(), strlen(question.c_str()));
-        // readState = read(acceptedFD, input, 255);
-        // // std::cout << input << std::endl;
-        // // std::cout << "Bytes read: " << readState << std::endl;
-        // // for (int index = 0; index < readState; ++index)
-        // // {
-        // //     std::cout << (0 + input[index]) << std::endl;
-        // // }
-        // if (readState < 0)
-        // {
-        //     break;
-        // }
-        // // replace CRLF
-        // input[readState - 2] = '\0';
-        // // std::cout << input << std::endl;
-        // if (strcmp(input, std::string("die").c_str()) == 0)
-        // {
-        //     *terminate = true;
-        //     kill(getpid(), SIGUSR1);
-        //     // close(socketFD);
-        //     break;
-        // }
-        // // std::cout << input << " | " << solution << std::endl;
-        // // std::cout << strcmp(input, solution.c_str()) << std::endl;
-        // // if (input[0] == solution || input[0] == solution + 32)
-        // // {
-        // //     writeState = write(acceptedFD, "Correct\n", 8);
-        // // }
-        // // else
-        // // {
-        // //     writeState = write(acceptedFD, "Incorrect\n", 10);
-        // // }
+        if (path[0] != '/')
+        {
+            responseCode = 400;
+            // res += "400 Bad Request" + CRLF;
+            res += "400 Bad Request\n";
+            break;
+        }
+        if (path.length() > 1)
+        {
+            // if the requested resource is not just '/' and it has more than just a get param
+            if (path[1] != '?')
+            {
+                responseCode = 404;
+                // res += "404 Not Found" + CRLF;
+                res += "404 Not Found\n";
+                break;
+            }
+            else if (path != "/?prev" && path != "/?next")
+            {
+                responseCode = 400;
+                // res += "400 Bad Request" + CRLF;
+                res += "400 Bad Request\n";
+                break;
+            }
+            else
+                param = path.substr(2, 4);
+        }
+        std::cout << responseCode << " " << param << std::endl;
+        break;
     }
-    writeState = write(acceptedFD, "bye\n", 4);
+    if (responseCode != 200)
+    {
+        res += CRLF;
+    //     std::string res = "HTTP/1.1 " + responseCode;
+    }
+    else {
+        // res += "200 OK" + CRLF + CRLF;
+        res += "200 OK\n";
+    }
+        // writeState = write(acceptedFD, res.c_str(), res.length());
+
+        writeState = write(acceptedFD, res.c_str(), res.length());
+        // res += "Content-Type:text/html; charset=UTF-8" + CRLF;
+        // std::string body = "<!DOCTYPE html><html><head><title>COS332 P1</title></head><body>Error: Could not read numbers from file \"fibnums.txt\"</body></html>" + CRLF;
+        // res += "Content-Length: " + body.length() + CRLF;
+        // res += body + CRLF;
+        res = "Content-Type:text/html; charset=UTF-8\n";
+        writeState = write(acceptedFD, res.c_str(), res.length());
+        std::string body = "<!DOCTYPE html><html><head><title>COS332 P3</title></head><body>Testing</body></html>\n";
+        res = "Content-Length: " + std::to_string(body.length()) + "\n\n";
+        // res += "\n\n";
+        writeState = write(acceptedFD, res.c_str(), res.length());
+        res = body + "\n";
+        writeState = write(acceptedFD, res.c_str(), res.length());
+        std::cout << "----------response----------\n" << res << "-----------------------------\n" ;
+        // writeState = write(acceptedFD, res.c_str(), res.length());
+        std::cout << writeState << std::endl;
+    // writeState = write(acceptedFD, "bye\n", 4);
     delete acceptedAddress;
     addresses[threadNum] = nullptr;
     close(acceptedFD);
     fileDescriptors[threadNum] = -1;
-    // std::cout << "Connection closed\n";
+    std::cout << "Connection closed\n";
     executing[threadNum] = false;
     // if (*terminate)
     // {
@@ -314,7 +377,7 @@ void connectionHandler(int acceptedFD, sockaddr_in *acceptedAddress, bool *termi
 }
 int main(int argc, char *argv[])
 {
-    constructQuestions();
+    // constructQuestions();
 
     // so the server doesn't suicide when a client disconnects forcefully
     signal(SIGPIPE, SIG_IGN);
@@ -330,7 +393,7 @@ int main(int argc, char *argv[])
     bzero((char *)&serverAddress, sizeof(serverAddress));
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_addr.s_addr = INADDR_ANY;
-    serverAddress.sin_port = htons(55555);
+    serverAddress.sin_port = htons(80);
     socketFD = socket(AF_INET, SOCK_STREAM, 0);
     // std::cout << socketFD << std::endl;
     if (socketFD < 0)
@@ -343,7 +406,7 @@ int main(int argc, char *argv[])
     if (listen(socketFD, 10) < 0)
     {
         close(socketFD);
-        error("Socket could not listen for connections");
+        error("Socket could not listen for connections test");
     }
     bool exit = false;
     int readState = 0;
