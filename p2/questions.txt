@@ -1,0 +1,36 @@
+?IEEE 802.11ax is better known as
+-WiFi 3
+-WiFi 4
+-WiFi 5
++WiFi 6
+-WiFi 7
+?The RIR for Europe is
++RIPE
+-EurNIC
+-EuroNIC
+-EurIN
+-EPIR
+?Which of the following lines are sent by an SMTP client to signal that the entire block of data has been transmitted
+-/data
+-quit
++.
+-A blank line
+-fin
+?FTP is based on the ... architecture
++Client-server
+-Peer-to-peer
+-Client-server-client-server
+-Host-to-host
+-Multitier
+?A program wishing to act as a server must specify ... when attempting to open a socket
+-The address of the server
+-The address of the client
++The port of the server
+-The port of the client
+-More than one of the above
+?A file on a name server that maps names to IP addresses is known as a ... file
+-Name
+-Hosts
+-Mapping
+-Resolution
++None of the above
