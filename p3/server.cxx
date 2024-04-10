@@ -12,6 +12,9 @@
 #include <cstdlib>
 #include <time.h>
 #include <sstream>
+#include <unordered_map>
+#include <iomanip>
+#include <ctime>
 // #include <system_error>
 void error(const char *msg)
 {
@@ -89,136 +92,27 @@ void sigint_handler(int signal)
     exit(signal);
 }
 
-int readInput(int fd, char *input, int len)
+std::string currentDate()
 {
-    int index = 0;
-    int bytesRead;
-    int totalRead = 0;
-    do
-    {
-        bytesRead = read(fd, input + index, 1);
-        if (bytesRead < 0)
-            return bytesRead;
-        totalRead += bytesRead;
-        // std::cout << index << ": " << (input[index] + 0) << " ";
-        write(fd, input + index, bytesRead);
-        if (index > 1 && input[index - 1] == 13 /*CR*/ && input[index] == 10)
-            break;
-        ++index;
-    } while (index < len);
+    // Get current time
+    std::time_t currentTime = std::time(nullptr);
+    std::tm *localTime = std::gmtime(&currentTime); // UTC time
 
-    // std::cout << (input[index] + 0) << std::endl;
-    return totalRead;
-}
-bool decode(char c)
-{
-    bool prevCR = false;
-    switch (c)
-    {
-    case 32:
-        std::cout << "[SP]";
-        break;
-    case 0:
-        std::cout << "[NULL]";
-        break;
-    case 1:
-        std::cout << "[SOH]";
-        break;
-    case 2:
-        std::cout << "[STX]";
-        break;
-    case 3:
-        std::cout << "[ETX]";
-        break;
-    case 4:
-        std::cout << "[EOT]";
-        break;
-    case 5:
-        std::cout << "[ENQ]";
-        break;
-    case 6:
-        std::cout << "[ACK]";
-        break;
-    case 7:
-        std::cout << "[BEL]";
-        break;
-    case 8:
-        std::cout << "[BS]";
-        break;
-    case 9:
-        std::cout << "[HT]";
-        break;
-    case 10:
-        std::cout << "[LF]";
-        break;
-    case 11:
-        std::cout << "[VT]";
-        break;
-    case 12:
-        std::cout << "[FF]";
-        break;
-    case 13:
-        prevCR = true;
-        break;
-    case 14:
-        std::cout << "[SO]";
-        break;
-    case 15:
-        std::cout << "[SI]";
-        break;
-    case 16:
-        std::cout << "[DLE]";
-        break;
-    case 17:
-        std::cout << "[DC1]";
-        break;
-    case 18:
-        std::cout << "[DC2]";
-        break;
-    case 19:
-        std::cout << "[DC3]";
-        break;
-    case 20:
-        std::cout << "[DC4]";
-        break;
-    case 21:
-        std::cout << "[NAK]";
-        break;
-    case 22:
-        std::cout << "[SYN]";
-        break;
-    case 23:
-        std::cout << "[ETB]";
-        break;
-    case 24:
-        std::cout << "[CAN]";
-        break;
-    case 25:
-        std::cout << "[EM]";
-        break;
-    case 26:
-        std::cout << "[SUB]";
-        break;
-    case 27:
-        std::cout << "[ESC]";
-        break;
-    case 28:
-        std::cout << "[FS]";
-        break;
-    case 29:
-        std::cout << "[GS]";
-        break;
-    case 30:
-        std::cout << "[RS]";
-        break;
-    case 31:
-        std::cout << "[US]";
-        break;
-    default:
-        std::cout << c;
-        break;
-    }
-    return prevCR;
+    // Define the months and days of the week
+    const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    const char *days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+    // Output the formatted date
+    std::stringstream budgetStringBuilder;
+    budgetStringBuilder
+        << days[localTime->tm_wday] << ", "
+        << std::setw(2) << std::setfill('0') << localTime->tm_mday << " "
+        << months[localTime->tm_mon] << " "
+        << 1900 + localTime->tm_year << " "
+        << std::setw(2) << std::setfill('0') << localTime->tm_hour << ":"
+        << std::setw(2) << std::setfill('0') << localTime->tm_min << ":"
+        << std::setw(2) << std::setfill('0') << localTime->tm_sec << " GMT";
+    return budgetStringBuilder.str();
 }
 void connectionHandler(int acceptedFD, sockaddr_in *acceptedAddress, bool *terminate, int threadNum, bool *executing)
 {
@@ -236,81 +130,82 @@ void connectionHandler(int acceptedFD, sockaddr_in *acceptedAddress, bool *termi
     std::string protocolVersion;
     std::string host;
     std::stringstream request;
-    int responseCode = 200;
+    int responseCode;
     std::string param("");
     std::string res;
-    const std::string CRLF = "" + ((char)13) + ((char)10);
+    const std::string CRLF({13, 10});
+    std::string body;
+    std::unordered_map<std::string, std::string> head;
+    int f1, f2, f3;
+    bool notInitialVals = false;
     while (!*terminate)
     {
         res = "HTTP/1.1 ";
         param = "";
         request.str("");
+        doubleCRLF[0] = doubleCRLF[1] = false;
+        responseCode = 0;
         // reading request
-        while (!*terminate)
+        // std::cout << "[" << threadNum << "][" << strAddr << ":" << acceptedAddress->sin_port << "][" << readState << "]: Waiting...\n";
+        while (!*terminate && (readState = read(acceptedFD, input, 255)) > 0)
         {
-            bzero(input, 256);
-            readState = read(acceptedFD, input, 255);
-            if (readState <= 0)
-            {
-                break;
-            }
-            // append to request
+            // std::cout << "[" << readState << "]: " << input << std::endl;
+            // if (readState < 255) std::cout <<"\n last char: " << (0 + input[readState-1]);
             request << input;
-            // std::cout << request.str() << std::endl;
-            std::cout << "[" << threadNum << "][" << strAddr << ":" << acceptedAddress->sin_port << "][" << readState << "]: ";
-            for (int index = 0; index < readState; ++index)
-            {
-                // if potential CRLF
-                if (prevCR)
-                {
-                    prevCR = false;
-                    if (input[index] == 10)
-                    {
-                        doubleCRLF[doubleCRLF[0]] = true;
-                        std::cout << "[CRLF" << doubleCRLF[0] << "," << doubleCRLF[1] << "]\n";
-                        // if end of request headers
-                        if (doubleCRLF[1])
-                        {
-                            std::cout << "Double CRLF\n";
-                            break;
-                        }
-                        continue;
-                    }
-                    std::cout << "[CR]";
-                }
-                prevCR = decode(input[index]);
-                // if no possibility of CRLF
-                // only write if doubleCRLF[0] is true
-                // no need to write if doubleCRLF[1], because this code will not execute if that is the case
-                if (!prevCR && doubleCRLF[0])
-                    doubleCRLF[0] = false;
-            }
-            if (doubleCRLF[1])
-            {
-                std::cout << "Double CRLF\n";
+            // if final piece of data
+            if (readState < 255 || (input[readState - 1] == 10 && input[readState - 2] == 13 && input[readState - 3] == 10 && input[readState - 4] == 13))
                 break;
+            bzero(input, 256);
+        }
+        body = "";
+        if (request.str() == "")
+            break;
+        responseCode = 200;
+        // std::cout << "Headers:\n"
+        //           << request.str() << "EOF\n";
+        std::string temp;
+        std::getline(request, temp);
+        int pos;
+        std::stringstream(temp) >> method >> path >> protocolVersion;
+        // std::cout << "While getline: \n";
+        std::string header;
+        while (std::getline(request, temp))
+        {
+            // std::cout << temp.length() << std::endl;
+            if (temp.length() > 1)
+            {
+                temp.pop_back();
+                pos = temp.find(':');
+                if (pos == std::string::npos)
+                    continue;
+                header = temp.substr(0, pos++);
+                if (temp.find(' ') == pos)
+                    pos += 1;
+                head[header] = temp.substr(pos);
             }
         }
-        if (readState == 0)
-            break;
-        std::cout << "Headers:\n"
-                  << request.str() << "EOF\n";
-        // interpret headers
-        request >> method;
-        if (method != "GET")
+        // std::cout << "Hash Map: \n";
+        // for (const auto &pair : head)
+        // {
+        //     std::cout << pair.first << ": " << pair.second << std::endl;
+        // }
+        // Validate method
+        if (method != "GET" && method != "HEAD" && method != "OPTIONS")
         {
             responseCode = 405; // Method not allowed
+            res += "405 Method Not Allowed\n";
             break;
         }
-
-        request >> path;
-
+        // validate path
         if (path[0] != '/')
         {
-            responseCode = 400;
-            // res += "400 Bad Request" + CRLF;
-            res += "400 Bad Request\n";
-            break;
+            if (method != "OPTIONS" || path != "*")
+            {
+                responseCode = 400;
+                res += "400 Bad Request\n";
+                body = "<!DOCTYPE html><html><head><title>COS332 P3</title></head><body>Bad Request</body></html>\n";
+                break;
+            }
         }
         if (path.length() > 1)
         {
@@ -318,67 +213,125 @@ void connectionHandler(int acceptedFD, sockaddr_in *acceptedAddress, bool *termi
             if (path[1] != '?')
             {
                 responseCode = 404;
-                // res += "404 Not Found" + CRLF;
                 res += "404 Not Found\n";
+                body = "<!DOCTYPE html><html><head><title>COS332 P3</title></head><body>404 \"" + path + "\" Not Found</body></html>\n";
                 break;
             }
-            else if (path != "/?prev" && path != "/?next")
+            if (path != "/?prev" && path != "/?next") // if invalid param
             {
                 responseCode = 400;
-                // res += "400 Bad Request" + CRLF;
                 res += "400 Bad Request\n";
+                body = "<!DOCTYPE html><html><head><title>COS332 P3</title></head><body>Invalid Parameter</body></html>\n";
                 break;
             }
-            else
-                param = path.substr(2, 4);
+            responseCode = 200;
+            res += "200 OK\n";
+            param = path.substr(2, 4);
+            break;
         }
-        std::cout << responseCode << " " << param << std::endl;
+        else
+        {
+            responseCode = 200;
+            res += "200 OK\n";
+        }
+
         break;
     }
-    if (responseCode != 200)
-    {
-        res += CRLF;
-    //     std::string res = "HTTP/1.1 " + responseCode;
-    }
-    else {
-        // res += "200 OK" + CRLF + CRLF;
-        res += "200 OK\n";
-    }
-        // writeState = write(acceptedFD, res.c_str(), res.length());
 
+    if (responseCode != 0)
+    {
+        if (responseCode == 200)
+        {
+            f1 = 0;
+            f2 = f3 = 1;
+            if (path != "/")
+            {
+                auto cookie = head.find("Cookie");
+                if (cookie != head.end())
+                {
+                    std::string temp;
+                    int cookieLen = cookie->second.length();
+                    int valPos = cookie->second.find('=') + 1;
+                    std::string cookieVal = cookie->second.substr(valPos, cookieLen - valPos);
+                    std::stringstream nums(cookieVal);
+                    int iNums[3] = {0, 1, 1};
+                    int counter = 0;
+                    while (std::getline(nums, temp, ','))
+                    {
+                        iNums[counter++] = std::stoi(temp);
+                    }
+                    f1 = iNums[0];
+                    f2 = iNums[1];
+                    f3 = iNums[2];
+                }
+
+                notInitialVals = (f1 != 0 || f2 != 1 || f3 != 1);
+                if (path == "/?next")
+                {
+                    f3 = (f1 = f2) + (f2 = f3);
+                }
+                else if (path == "/?prev" && notInitialVals)
+                {
+                    f1 = (f3 = f2) - (f2 = f1);
+                }
+                notInitialVals = (f1 != 0 || f2 != 1 || f3 != 1);
+            }
+            std::stringstream budgetStringBuilder;
+            budgetStringBuilder << "<!DOCTYPE html>"
+                                << "<html>"
+                                << "<head><title>COS332 P1</title></head>"
+                                << "<body>"
+                                << "<a href=\"/?prev\"" << (!notInitialVals ? " style=\"pointer-events: none\"" : "") << ">Previous</a>"
+                                << "(" << std::to_string(f1) << ", " << std::to_string(f2) << ", " << std::to_string(f3) << ")"
+                                << "<a href=\"/?next\">Next</a>"
+                                << "</body>"
+                                << "</html>";
+            body = budgetStringBuilder.str();
+        }
+        // Response
+        std::stringstream response;
+        if (method == "OPTIONS")
+        {
+
+            response << res;
+            if (responseCode == 200)
+                response << "Allow: GET, HEAD, OPTIONS" << CRLF;
+            response << "Content-Length: 0" << CRLF;
+        }
+        else
+        {
+            response << res;
+            response << "Content-Type:text/html; charset=UTF-8" << CRLF;
+            response << "Set-Cookie: seq=" << std::to_string(f1) << ", " << std::to_string(f2) << ", " << std::to_string(f3) << CRLF;
+            response << "Content-Length: " << std::to_string(body.length()) << CRLF;
+        }
+        response << "Cache-Control:max-age=0" << CRLF;
+        response << "Server: Toaster 9000" << CRLF;
+        response << "Date: " << currentDate() << CRLF;
+        // BODY
+        if (method == "GET")
+            response << CRLF << body << CRLF;
+        response << CRLF;
+        // std::cout << "----------response----------\n"
+        //           << res << "-----------------------------\n";
+        res = response.str();
         writeState = write(acceptedFD, res.c_str(), res.length());
-        // res += "Content-Type:text/html; charset=UTF-8" + CRLF;
-        // std::string body = "<!DOCTYPE html><html><head><title>COS332 P1</title></head><body>Error: Could not read numbers from file \"fibnums.txt\"</body></html>" + CRLF;
-        // res += "Content-Length: " + body.length() + CRLF;
-        // res += body + CRLF;
-        res = "Content-Type:text/html; charset=UTF-8\n";
-        writeState = write(acceptedFD, res.c_str(), res.length());
-        std::string body = "<!DOCTYPE html><html><head><title>COS332 P3</title></head><body>Testing</body></html>\n";
-        res = "Content-Length: " + std::to_string(body.length()) + "\n\n";
-        // res += "\n\n";
-        writeState = write(acceptedFD, res.c_str(), res.length());
-        res = body + "\n";
-        writeState = write(acceptedFD, res.c_str(), res.length());
-        std::cout << "----------response----------\n" << res << "-----------------------------\n" ;
-        // writeState = write(acceptedFD, res.c_str(), res.length());
-        std::cout << writeState << std::endl;
-    // writeState = write(acceptedFD, "bye\n", 4);
+    }
     delete acceptedAddress;
     addresses[threadNum] = nullptr;
     close(acceptedFD);
     fileDescriptors[threadNum] = -1;
-    std::cout << "Connection closed\n";
     executing[threadNum] = false;
     // if (*terminate)
     // {
     //     kill(getpid(), SIGUSR1);
     // }
     // std::terminate();
+    // std::cout << "Connection closed\n";
 }
 int main(int argc, char *argv[])
 {
     // constructQuestions();
-
     // so the server doesn't suicide when a client disconnects forcefully
     signal(SIGPIPE, SIG_IGN);
     // so the server doesn't suicide with an open port
