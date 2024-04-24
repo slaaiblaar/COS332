@@ -19,17 +19,42 @@ void sigint_handler(int signal)
     exit(signal);
 }
 
-class LDAPSearchEntry {
-    public:
-        std::string objectName = "";
-        std::unordered_map<std::string, std::vector<std::string>> attributes;
-        int messageID;
+class LDAPSearchEntry
+{
+public:
+    std::string objectName = "INVALID";
+    std::unordered_map<std::string, std::vector<std::string>> attributes;
+    std::vector<std::string> children;
+    int messageID;
+    void print() {
+        std::cout << "Object Name: " << objectName << std::endl;
+        std::cout << "\tMessage ID: " << messageID << std::endl;
+        std::cout << "\tAttributes: \n";
+        for (std::pair<std::string, std::vector<std::string>> attribute : attributes)
+        {
+            std::cout << "\t\t" << attribute.first << ": ";
+            for (std::string value : attribute.second)
+            {
+                std::cout << value << ", ";
+            }
+            std::cout << std::endl;
+        }
+        if (children.size() > 0)
+        {
+            std::cout << "\tChildren: \n";
+            for (std::string child : children)
+            {
+                std::cout << "\t\t" << child << std::endl;
+            }
+        }
+    }
 };
 class LDAPResponse
 {
 private:
     std::vector<std::vector<unsigned char>> messages;
     int messageID;
+    std::vector<LDAPSearchEntry> entries;
     // bool resDone = false;
 public:
     int getExpectedLength(std::vector<unsigned char> message)
@@ -56,25 +81,9 @@ public:
 
         return 2 + messageLength + bytesLength;
     }
-    LDAPSearchEntry parseSearchEntry(unsigned char *buffer, int length) {
-        LDAPSearchEntry entry;
-        int messageLength = static_cast<int>((unsigned char)buffer[1]);
-        int lengthBytes = 0;
-        // long form definite length
-        if (messageLength >= 0x80)
-        {
-            lengthBytes = messageLength - 0x80;
-            std::stringstream lenHex;
-            lenHex << std::hex << std::setfill('0');
-            for (int x = 0; x < lengthBytes; ++x)
-            {
-                lenHex << std::setw(2) << static_cast<int>((unsigned char)buffer[2 + x]);
-            }
-            messageLength = std::stoi(lenHex.str(), nullptr, 16);
-        }
-        entry.messageID = static_cast<int>(buffer[2 + lengthBytes + 2]);
-        const int entryStart = 2 + lengthBytes + 2 + 1;
-        messageLength = static_cast<int>((unsigned char)buffer[1 + entryStart]);
+    void getLengthBytes(unsigned char *buffer, int length, int &messageLength, int &lengthBytes, int startPos)
+    {
+        messageLength = static_cast<int>((unsigned char)buffer[startPos + 1]);
         lengthBytes = 0;
         if (messageLength >= 0x80)
         {
@@ -83,38 +92,144 @@ public:
             lenHex << std::hex << std::setfill('0');
             for (int x = 0; x < lengthBytes; ++x)
             {
-                lenHex << std::setw(2) << static_cast<int>((unsigned char)buffer[2 + x]);
+                lenHex << std::setw(2) << static_cast<int>((unsigned char)buffer[startPos + 2 + x]);
             }
             messageLength = std::stoi(lenHex.str(), nullptr, 16);
         }
+    }
+    LDAPSearchEntry parseSearchEntry(unsigned char *buffer, int length)
+    {
+        LDAPSearchEntry entry;
+        int messageLength = static_cast<int>((unsigned char)buffer[1]);
+        int lengthBytes = 0;
+        getLengthBytes(buffer, length, messageLength, lengthBytes, 0);
+        entry.messageID = static_cast<int>(buffer[2 + lengthBytes + 2]);
+        const int entryStart = 2 + lengthBytes + 2 + 1; // after ID
+        if (buffer[entryStart] != 0x64)
+        {
+            // std::cout << "Invalid entry identifier: 0x" << (std::stringstream() << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(buffer[entryStart])).str() << std::endl;
+            if (buffer[entryStart] == 0x65)
+            {
+                entry.objectName = "searchResDone";
+                return entry;
+            }
+            return entry;
+        }
+        messageLength = static_cast<int>((unsigned char)buffer[1 + entryStart]);
+        lengthBytes = 0;
+        getLengthBytes(buffer, length, messageLength, lengthBytes, entryStart);
         const int objectNameStart = entryStart + 2 + lengthBytes;
+        messageLength = static_cast<int>((unsigned char)buffer[objectNameStart + 1]);
+        lengthBytes = 0;
+        getLengthBytes(buffer, length, messageLength, lengthBytes, objectNameStart);
+        std::stringstream objectName;
+        for (int x = 0; x < messageLength; ++x)
+        {
+            objectName << buffer[objectNameStart + 2 + lengthBytes + x];
+        }
+        entry.objectName = objectName.str();
+        // std::cout << "Object name: " << entry.objectName << std::endl;
+
+        int attributesStart = objectNameStart + 2 + lengthBytes + messageLength;
+        // std::cout << "Attributes start: " << attributesStart << std::endl;
+        int attributesLength = static_cast<int>((unsigned char)buffer[attributesStart + 1]);
+        lengthBytes = 0;
+        getLengthBytes(buffer, length, attributesLength, lengthBytes, attributesStart);
+        int partialAttributeListStart;
+        int partialAttributeListLength;
+        int attributeDescriptionPos;
+        int attributeDescriptionLength;
+        partialAttributeListStart = attributesStart + 2 + lengthBytes;
+        partialAttributeListLength = static_cast<int>((unsigned char)buffer[partialAttributeListStart + 1]);
+        lengthBytes = 0;
+        getLengthBytes(buffer, length, partialAttributeListLength, lengthBytes, partialAttributeListStart);
+        do
+        {
+            // std::cout << "\tPartial attribute list start: " << partialAttributeListStart << std::endl;
+            // std::cout << "\tPartial attribute list length: " << static_cast<int>(partialAttributeListLength) << std::endl;
+            attributeDescriptionPos = partialAttributeListStart + 2 + lengthBytes;
+            // std::cout << "\t\tAttribute description pos: " << attributeDescriptionPos << std::endl;
+            attributeDescriptionLength = static_cast<int>((unsigned char)buffer[attributeDescriptionPos + 1]);
+            lengthBytes = 0;
+            getLengthBytes(buffer, length, attributeDescriptionLength, lengthBytes, attributeDescriptionPos);
+            // std::cout << "\t\tAttribute description length: " << static_cast<int>(attributeDescriptionLength) << std::endl;
+            std::string attributeDescription;
+            for (int x = 0; x < attributeDescriptionLength; ++x)
+            {
+                attributeDescription += buffer[attributeDescriptionPos + 2 + lengthBytes + x];
+            }
+            // std::cout << "\t\t\tAttribute description: " << attributeDescription << std::endl;
+            int attributeValuesStart = attributeDescriptionPos + 2 + lengthBytes + attributeDescriptionLength;
+            // std::cout << "\t\tAttribute values start: " << attributeValuesStart << std::endl;
+            int attributeValuesLength = static_cast<int>((unsigned char)buffer[attributeValuesStart + 1]);
+            lengthBytes = 0;
+            getLengthBytes(buffer, length, attributeValuesLength, lengthBytes, attributeValuesStart);
+            // std::cout << "\t\tAttribute values length: " << static_cast<int>(attributeValuesLength) << std::endl;
+            std::vector<std::string> attributeValues;
+            int attributeValueStart = attributeValuesStart + 2 + lengthBytes;
+            int attributeValueLength = static_cast<int>((unsigned char)buffer[attributeValueStart + 1]);
+            lengthBytes = 0;
+            getLengthBytes(buffer, length, attributeValueLength, lengthBytes, attributeValueStart);
+            do
+            {
+                // std::cout << "\t\tAttribute value start: " << attributeValueStart << std::endl;
+                // std::cout << "\t\tAttribute value length: " << static_cast<int>(attributeValueLength) << std::endl;
+                std::string attributeValue;
+                for (int x = 0; x < attributeValueLength; ++x)
+                {
+                    attributeValue += buffer[attributeValueStart + 2 + lengthBytes + x];
+                }
+                // std::cout << "\t\t\tAttribute value: " << attributeValue << std::endl;
+                if (entry.attributes.find(attributeDescription) == entry.attributes.end())
+                {
+                    entry.attributes[attributeDescription] = std::vector<std::string>();
+                }
+                entry.attributes[attributeDescription].push_back(attributeValue);
+                attributeValueStart += 2 + lengthBytes + attributeValueLength;
+                getLengthBytes(buffer, length, attributeValueLength, lengthBytes, attributeValueStart);
+            } while (attributeValueStart < attributeValuesStart + 2 + lengthBytes + attributeValuesLength);
+
+            // reset lengthBytes
+            getLengthBytes(buffer, length, partialAttributeListLength, lengthBytes, partialAttributeListStart);
+            // std::cout << "\tCurr partialAttributeList start: " << partialAttributeListStart << std::endl;
+            // std::cout << "\tCurr partialAttributeList length: " << partialAttributeListLength << std::endl;
+            // std::cout << "\tCurr partialAttributeList length bytes: " << lengthBytes << std::endl;
+            // get next partialAttributeList position
+            partialAttributeListStart += 2 + lengthBytes + partialAttributeListLength;
+            getLengthBytes(buffer, length, partialAttributeListLength, lengthBytes, partialAttributeListStart);
+            // std::cout << "\tNext partialAttributeList start: " << partialAttributeListStart << std::endl;
+            // std::cout << "\tNext partialAttributeList length: " << partialAttributeListLength << std::endl;
+            // std::cout << "\tNext partialAttributeList length bytes: " << lengthBytes << std::endl;
+            // while next partialAttributeList exists
+        } while (partialAttributeListStart < attributesStart + 2 + lengthBytes + attributesLength);
+        return entry;
     }
     void parseSearchResponse(unsigned char *buffer, int length)
     {
         // check if previous message is complete and add a new message if necessary
-        std::cout << "Parse start\n";
+        // std::cout << "Parse start\n";
         std::vector<unsigned char> *lastMessage;
         int lastMessageExpectedLength = 0;
-        std::cout << "Num messages: " << messages.size();
+        // std::cout << "Num messages: " << messages.size();
         int bIndex = 0;
         while (bIndex < length && !resDone())
         {
             // std::cout << "while start";
             if (messages.size() == 0 || lastMessage->size() == getExpectedLength((messages[messages.size() - 1])) || !resDone())
             {
-                std::cout << "\tCreating new message vector\n";
+                // std::cout << "\tCreating new message vector\n";
                 messages.push_back(std::vector<unsigned char>());
-                std::cout << "\tNum messages: " << messages.size();
+                // std::cout << "\tNum messages: " << messages.size();
 
                 lastMessage = &(messages[messages.size() - 1]);
 
-                std::cout << "\tPushing first : ";
+                // std::cout << "\tPushing first : ";
                 while (bIndex < length && getExpectedLength(*lastMessage) == -1)
                 {
-                    std::cout << (std::stringstream() << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(buffer[bIndex])).str() << " ";
+                    // std::cout << (std::stringstream() << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(buffer[bIndex])).str() << " ";
                     lastMessage->push_back(buffer[bIndex++]);
                 }
-                std::cout << std::endl;
+                // std::cout << std::endl;
                 // lastMessage = &(messages[messages.size() - 1]);
                 lastMessageExpectedLength = getExpectedLength(*lastMessage);
             }
@@ -150,18 +265,19 @@ public:
                 messageLength = std::stoi(lenHex.str(), nullptr, 16);
             }
             int protocolOp = static_cast<int>(message[2 + bytesLength + 3]);
-            std::cout << "ProtocolOp: 0x" << (std::stringstream() << std::hex << std::setfill('0') << std::setw(2) << protocolOp).str() << std::endl;
+            // std::cout << "ProtocolOp: 0x" << (std::stringstream() << std::hex << std::setfill('0') << std::setw(2) << protocolOp).str() << std::endl;
             if (protocolOp == 0x65)
             { // if protocolOp is searchResDone
                 return true;
             }
+            LDAPSearchEntry entry = parseSearchEntry(message.data(), message.size());
+            // std::cout << "Object Name: " << entry.objectName << std::endl;
         }
         return false;
     }
     void printMessages()
     {
-
-        for (int mi = 0; mi < messages.size(); ++ mi)
+        for (int mi = 0; mi < messages.size(); ++mi)
         {
             std::vector<unsigned char> m = messages[mi];
             std::cout << "Message " << std::to_string(mi) << std::endl;
@@ -176,7 +292,134 @@ public:
                 ss << std::setw(2) << static_cast<int>(m[x]) << " ";
             }
             std::cout << ss.str() << std::endl;
+            LDAPSearchEntry entry = parseSearchEntry(m.data(), m.size());
+            std::cout << "Object Name: " << entry.objectName << std::endl;
+            std::cout << "Message ID: " << entry.messageID << std::endl;
+            std::cout << "Attributes: \n";
+            for (std::pair<std::string, std::vector<std::string>> attribute : entry.attributes)
+            {
+                std::cout << "\t" << attribute.first << ": ";
+                for (std::string value : attribute.second)
+                {
+                    std::cout << value << ", ";
+                }
+                std::cout << std::endl;
+            }
         }
+    }
+    void constructEntries()
+    {
+        for (std::vector<unsigned char> m : messages)
+        {
+            LDAPSearchEntry entry = parseSearchEntry(m.data(), m.size());
+            entries.push_back(entry);
+        }
+    }
+    // parameter is a string of words separated by beriods ('.')
+    std::vector<LDAPSearchEntry> getEntry(std::string objectNameComponent)
+    {
+        std::vector<LDAPSearchEntry> matchingEntries;
+        std::vector<std::string> objectNameComponents;
+        std::vector<std::string> searchComponents;
+        std::string temp = "";
+        for (char c : objectNameComponent)
+        {
+            if (c == '.')
+            {
+                searchComponents.push_back(temp);
+                temp = "";
+            }
+            else
+            {
+                temp += c;
+            }
+        }
+        searchComponents.push_back(temp);
+        for (LDAPSearchEntry entry : entries)
+        {
+            objectNameComponents.clear();
+            temp = "";
+            for (char c : entry.objectName)
+            {
+                if (c == ',')
+                {
+                    objectNameComponents.push_back(temp);
+                    temp = "";
+                }
+                else if (c == '=') 
+                {
+                    temp = "";
+                }
+                else
+                {
+                    temp += c;
+                }
+            }
+            objectNameComponents.push_back(temp);
+            bool match = true;
+            for (int i = 0; i < searchComponents.size() && i < objectNameComponents.size(); ++i)
+            {
+                if (objectNameComponents[i] != searchComponents[i])
+                {
+                    match = false;
+                    break;
+                }
+            }
+            if (match)
+            {
+                std::vector<LDAPSearchEntry> children = findChildren(entry);
+                for (LDAPSearchEntry child : children)
+                {
+                    std::string childName = "";
+                    std::string temp = "";
+                    for (char c : child.objectName)
+                    {
+                        if (c == ',')
+                        {
+                            if (childName.length() != 0)
+                                childName += ".";
+                            childName += temp;
+                            temp = "";
+                        }
+                        else if (c == '=')
+                        {
+                            temp = "";
+                        }
+                        else
+                        {
+                            temp += c;
+                        }
+                    }
+                    if (childName.length() != 0)
+                        childName += ".";
+                    childName += temp;
+                    entry.children.push_back(childName);
+                }
+                matchingEntries.push_back(entry);
+            }
+        }
+        return matchingEntries;
+    }
+    std::vector<LDAPSearchEntry> findChildren(LDAPSearchEntry entry)
+    {
+        std::vector<LDAPSearchEntry> children;
+        std::string parentName = entry.objectName;
+        // std::cout << "Parent: " << parentName << std::endl;
+        for (LDAPSearchEntry e : entries)
+        {
+            if (e.objectName.find(parentName) != std::string::npos && e.objectName != parentName)
+            {
+                // std::cout << parentName << " contained in " << e.objectName << std::endl;
+                // if only one extra comma and entry.objectName is at end of e.objectName,
+                // then e is a child of entry
+                if (e.objectName.find(",") + 1 == e.objectName.find(parentName) 
+                &&  e.objectName.find(parentName) + parentName.length() == e.objectName.length())
+                {
+                    children.push_back(e);
+                }
+            }
+        }
+        return children;
     }
 };
 class LDAPRequestBuilder
@@ -250,7 +493,7 @@ public:
         {
             filter << std::setw(2) << static_cast<int>(c);
         }
-        std::cout << "Filter: " << filter.str() << std::endl;
+        // std::cout << "Filter: " << filter.str() << std::endl;
         std::string typesOnly = "010100";
         std::string timeLimit = "020100";
         std::string sizeLimit = "020100";
@@ -363,7 +606,7 @@ std::vector<unsigned char> hexToBytes(const std::string &hex)
 }
 std::string bytesToHex(const unsigned char *data, size_t length)
 {
-    std::cout << "Length: " << std::to_string(length) << std::endl;
+    // std::cout << "Length: " << std::to_string(length) << std::endl;
     std::stringstream ss;
     ss << std::hex << std::setfill('0');
     for (size_t i = 0; i < length; ++i)
@@ -371,7 +614,7 @@ std::string bytesToHex(const unsigned char *data, size_t length)
         // std::cout << std::to_string(i) << std::endl;
         ss << std::setw(2) << static_cast<int>(data[i]);
     }
-    std::cout << "Hex: " << ss.str() << std::endl;
+    // std::cout << "Hex: " << ss.str() << std::endl;
     return ss.str();
 }
 
@@ -410,7 +653,7 @@ bool parseBindResponse(const unsigned char *data, size_t length)
     int messageType = static_cast<int>(data[5]);
     if (messageType == 0x61)
     {
-        std::cout << "Bind response\n";
+        // std::cout << "Bind response\n";
     }
     else
     {
@@ -428,22 +671,22 @@ bool parseBindResponse(const unsigned char *data, size_t length)
         std::cout << "Invalid response, response sequence not found. Expected length: " << std::to_string(7 + responseSequenceLength) << ", received length: " << std::to_string(length) << "\n";
         return false;
     }
-    std::cout << "Response sequence length: " << std::to_string(responseSequenceLength) << "\n";
-    std::cout << "Response sequence: ";
-    std::stringstream ss;
-    ss << std::hex;
-    for (int x = 7; x < 7 + responseSequenceLength; x++)
-    {
-        ss << std::setw(2) << std::setfill('0') << (int)data[x] << " ";
-    }
-    std::cout << ss.str() << "\n";
+    // std::cout << "Response sequence length: " << std::to_string(responseSequenceLength) << "\n";
+    // std::cout << "Response sequence: ";
+    // std::stringstream ss;
+    // ss << std::hex;
+    // for (int x = 7; x < 7 + responseSequenceLength; x++)
+    // {
+    //     ss << std::setw(2) << std::setfill('0') << (int)data[x] << " ";
+    // }
+    // std::cout << ss.str() << "\n";
     if (responseSequenceLength < 7)
     {
         std::cout << "Invalid response, response sequence not found\n";
         return false;
     }
     int resultCode = static_cast<int>(data[9]);
-    std::cout << "Result code: " << std::to_string(resultCode) << " (" << resultCodes[resultCode] << ")\n";
+    // std::cout << "Result code: " << std::to_string(resultCode) << " (" << resultCodes[resultCode] << ")\n";
     return (resultCode == 0);
 }
 
@@ -477,7 +720,7 @@ int parseSearchResponse(unsigned char *buffer, int length)
         }
         messageLength = std::stoi(lenHex.str(), nullptr, 16);
     }
-    std::cout << "parseSearchResponse length: " << messageLength << std::endl;
+    // std::cout << "parseSearchResponse length: " << messageLength << std::endl;
     return messageLength + 2 + lengthBytes;
 }
 
@@ -519,18 +762,18 @@ int main()
     std::vector<unsigned char> message = hexToBytes(hexString);
     // int message[] = {0x30, 0x0e, 0x02, 0x01, 0x01, 0x60, 0x0c, 0x02, 0x01, 0x03, 0x04, 0x00, 0x80, 0x00};
     // const char* message = "LDAP bind request";
-    for (int x = 0; x < message.size(); x++)
-    {
-        std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)message[x] << " ";
-    }
-    std::cout << std::endl;
+    // for (int x = 0; x < message.size(); x++)
+    // {
+    //     std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)message[x] << " ";
+    // }
+    // std::cout << std::endl;
     // Send the message to the server
     if (send(sockfd, message.data(), message.size(), 0) < 0)
     {
         perror("Send failed");
         return 1;
     }
-    std::cout << "Sent\n";
+    // std::cout << "Sent\n";
     // Wait for the response
     char buffer[2048];
     int valread;
@@ -543,15 +786,15 @@ int main()
         return 1;
     }
     buffer[valread] = '\0'; // Null-terminate the received data
-    std::cout << "Received: \n";
+    // std::cout << "Received: \n";
     // std::cout << std::string(buffer) << std::endl;
     std::string responseHex = bytesToHex((unsigned char *)buffer, valread);
-    std::cout << responseHex << std::endl;
+    // std::cout << responseHex << std::endl;
     bool bindSuccess = parseBindResponse((unsigned char *)buffer, valread);
 
     if (bindSuccess)
     {
-        std::cout << "Bind successful\n";
+        // std::cout << "Bind successful\n";
     }
     else
     {
@@ -567,8 +810,8 @@ int main()
         std::cout << "Enter organisation name: \n";
         std::string searchParam;
         std::cin >> searchParam;
-        std::string searchQuery = "dc=" + searchParam;
-        std::cout << "Searching for: " << searchQuery << std::endl;
+        std::string searchQuery = "dc=za";
+        // std::cout << "Searching for: " << searchQuery << std::endl;
 
         // Construct the LDAP search request
         LDAPRequestBuilder builder;
@@ -576,7 +819,7 @@ int main()
             .appendDNComponent(searchQuery)
             .setScope("wholeSubtree");
         std::string searchRequest = builder.build();
-        std::cout << "Search request: " << searchRequest << std::endl;
+        // std::cout << "Search request: " << searchRequest << std::endl;
         message = hexToBytes(searchRequest);
         // Send the message to the server
         if (send(sockfd, message.data(), message.size(), 0) < 0)
@@ -585,7 +828,7 @@ int main()
             return 1;
         }
         memset(buffer, 0, sizeof(buffer));
-        std::cout << "Sent\n";
+        // std::cout << "Sent\n";
         // Wait for the response
         bool responseComplete = false;
         int messageStart = 0;
@@ -599,98 +842,54 @@ int main()
                 return 1;
             }
             buffer[valread] = '\0'; // Null-terminate the received data
-            std::cout << "Received: " << std::string(buffer) << std::endl;
+            // std::cout << "Received: " << std::string(buffer) << std::endl;
             std::string responseHex = bytesToHex((unsigned char *)buffer, valread);
-            std::cout << "Received (Hex): \n";
+            // std::cout << "Received (Hex): \n";
             // std::cout << "\n0040          ";
             for (int x = 0; x < valread; ++x)
             {
                 // if ((x + 2) % 16 == 0)
                 //     std::cout << std::endl
                 //               << "0" << std::setw(2) << std::setfill('0') << ((x + 2) / 16 + 4) << "0   ";
-                if (x % 50 == 0)
-                    std::cout << std::endl;
+                // if (x % 50 == 0)
+                //     std::cout << std::endl;
                 // std::cout << " ";
-                std::cout << (std::stringstream() << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>((unsigned char)buffer[x]) << " ").str();
+                // std::cout << (std::stringstream() << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>((unsigned char)buffer[x]) << " ").str();
             }
-            std::cout << "\n--------eof----------\n";
+            // std::cout << "\n--------eof----------\n";
             if (valread < 2)
             {
-                std::cout << "Invalid response\n";
+                // std::cout << "Invalid response\n";
                 continue;
             }
             response.parseSearchResponse((unsigned char *)buffer, valread);
-            std::cout << "\n----------Parse Complete----------\n";
+            // std::cout << "\n----------Parse Complete----------\n";
             if (response.resDone())
             {
-                std::cout << "Response Complete\n";
+                // std::cout << "Response Complete\n";
                 responseComplete = true;
                 continue;
             }
-            std::cout << "Response not complete\n";
-            // continue;
-            // if (buffer[0] != 0x30)
-            // {
-            //     std::cout << "Invalid response, not a sequence\n";
-            //     continue;
-            // }
-            // int messageLength = static_cast<int>((unsigned char)buffer[1]);
-            // int lengthBytes = 0;
-            // // long form definite length
-            // if (messageLength >= 0x80)
-            // {
-            //     lengthBytes = messageLength - 0x80;
-            //     std::stringstream lenHex;
-            //     for (int x = 0; x < lengthBytes * 2; ++x)
-            //     {
-            //         lenHex << responseHex[4 + x];
-            //     }
-            //     messageLength = std::stoi(lenHex.str(), nullptr, 16);
-            // }
-            // std::cout << "Message length: " << std::to_string(messageLength) << std::endl;
-            // // if message incomplete (received data is less than declared and number of read bytes is lower than buffer cap)
-            // if (valread < messageLength + 2 + lengthBytes && valread < sizeof(buffer) - 1)
-            // {
-            //     std::cout << "Invalid message length. received: " << std::to_string(valread) << ", expected: " << std::to_string(messageLength + 2 + lengthBytes) << "\n";
-            //     continue;
-            // }
-
-            // // if more data received
-            // if (valread > messageLength + 2 + lengthBytes)
-            // {
-            //     if (static_cast<int>((unsigned char)buffer[messageLength + 2 + lengthBytes]) != 0x30)
-            //     {
-            //         std::cout << "Too much data received. Expected: " << std::to_string(messageLength + 2 + lengthBytes) << " bytes, received " << valread << " bytes. ";
-            //         std::cout << std::to_string(messageLength + 2 + lengthBytes) << "th byte is "
-            //                   << (std::stringstream() << std::hex
-            //                                           << std::setfill('0')
-            //                                           << std::setw(2)
-            //                                           << static_cast<int>((unsigned char)buffer[messageLength + 2 + lengthBytes]))
-            //                          .str()
-            //                   << std::endl;
-            //     }
-            //     // else if ()
-            // }
-            // if (buffer[2] != 0x02)
-            // {
-            //     std::cout << "Invalid response, message id not type integer (0x02). Received type: 0x" << (std::stringstream() << std::hex << buffer[2]).str() << "\n";
-            //     continue;
-            // }
-            // if (buffer[3] != 0x01)
-            // {
-            //     std::cout << "Invalid response, message id length not 1. Received length: " << std::to_string(buffer[3]) << "\n";
-            //     continue;
-            // }
-            // int respMessageID = static_cast<int>(buffer[4]);
-            // if (messageID != respMessageID)
-            // {
-            //     std::cout << "Invalid response, message id does not match, skipping. Expected: " << std::to_string(messageID) << ", received: " << std::to_string(respMessageID) << "\n";
-            //     continue;
-            // }
 
             memset(buffer, 0, sizeof(buffer));
         }
-        response.printMessages();
+        // response.printMessages();
+        // std::cout << "Constructing entries\n";
+        response.constructEntries();
+        // std::cout << "Geting matching entries\n";
+        std::vector<LDAPSearchEntry> matchingEntries = response.getEntry(searchParam);
+        if (matchingEntries.size() == 0)
+        {
+            std::cout << "No matching entries found\n";
+        }
+        else {
+            std::cout << "Matching entries: \n";
+            for (LDAPSearchEntry entry : matchingEntries)
+            {
+                entry.print();
+            }
+        }
+        
         ++messageID;
         std::cout << "Continue searching? (y/n)\n";
         char continueChar;
