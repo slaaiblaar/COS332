@@ -100,17 +100,17 @@ bool check_ok(const char *buffer, int len)
     return buffer[0] == '+' && buffer[1] == 'O' && buffer[2] == 'K';
 }
 
-void read_message(std::stringstream *ss, const int numOctets, int totalBytes = 0)
+void read_message(std::stringstream *ss, const int numOctets, int &totalBytes)
 {
     ss->str("");
     int bytes;
-    // read all data in 1023 byte chunks
-    while (totalBytes < numOctets)
+    // read all data in 1024 byte chunks
+    // while message does not end with "\r\n.\r\n"
+    while (ss->str().find("\r\n.\r\n") == std::string::npos)
     {
         char *buffer = new char[1024];
         std::fill_n(buffer, 1024, '\0');
-        bytes = SSL_read(ssl, buffer, 1023);
-        buffer[bytes] = '\0';
+        bytes = SSL_read(ssl, buffer, 1024);
         
         (*ss) << std::string(buffer).substr(0, bytes);
         totalBytes += bytes;
@@ -317,6 +317,7 @@ int main()
         std::fill_n(buffer, 1024, 0);
         bytes = SSL_read(ssl, buffer, sizeof(buffer));
         if (!check_ok(buffer, bytes)) {
+            std::cout << "Error reading LIST of email " << i << std::endl;
             break;
         }
         printf("=========Email %d==========\n", i);
@@ -337,6 +338,7 @@ int main()
         std::fill_n(buffer, 1024, 0);
         bytes = SSL_read(ssl, buffer, sizeof(buffer));
         if (!check_ok(buffer, bytes)) {
+            std::cout << "Error retrieving email " << i << std::endl;
             break;
         }
         // get first line from buffer and exclude it from message
@@ -357,7 +359,7 @@ int main()
         std::string messageStr = message.str();
         read_message(&message, size, totalBytes);
         messageStr.append(message.str());
-
+        
         // find end of head
         int headEnd = messageStr.find("\r\n\r\n");
         std::string head = messageStr.substr(0, headEnd);
@@ -369,6 +371,7 @@ int main()
         if (it == itEnd) {
             continue;
         }
+        
         // find subject
         int subjectStart = head.find("Subject: ");
         int subjectEnd = head.find("\r\n", subjectStart);
@@ -386,7 +389,6 @@ int main()
         
     }
     std::cout << "Finished reading emails" << std::endl;
-    
     send_command(ssl, "QUIT\r\n");
     SSL_shutdown(ssl);
     close(sock);
