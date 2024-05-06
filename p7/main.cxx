@@ -11,9 +11,10 @@
 #include <sstream>
 #include <fstream>
 #include <regex>
-// ... (other includes as necessary)
+
 SSL *ssl = nullptr;
 int sock;
+// Close the SSL connection and socket when the program is interrupted
 void sigint_handler(int sig)
 {
     std::cout << "Caught signal " << sig << std::endl;
@@ -23,6 +24,7 @@ void sigint_handler(int sig)
     close(sock);
     exit(sig);
 }
+// Close the SSL connection and socket when this program throws an error
 void error(const char *msg)
 {
     perror(msg);
@@ -30,6 +32,7 @@ void error(const char *msg)
     close(sock);
     exit(1);
 }
+// Look up address of a host domain
 // Source: https://gist.github.com/jirihnidek/bf7a2363e480491da72301b228b35d5d
 std::string lookup_host(const char *host)
 {
@@ -68,12 +71,13 @@ std::string lookup_host(const char *host)
             break;
         }
         inet_ntop(res->ai_family, ptr, addrstr, 100);
-        printf("IPv%d address: %s (%s)\n", res->ai_family == PF_INET6 ? 6 : 4,
-               addrstr, res->ai_canonname);
         // if ai family is IPV4
         if (res->ai_family != PF_INET6)
         {
+            printf("IPv%d address: %s (%s)\n", res->ai_family == PF_INET6 ? 6 : 4,
+                addrstr, res->ai_canonname);
             ip_address = addrstr;
+            break;
         }
         res = res->ai_next;
     }
@@ -98,26 +102,24 @@ bool check_ok(const char *buffer, int len)
 
 void read_message(std::stringstream *ss, const int numOctets, int totalBytes = 0)
 {
-    // printf("=====Reading message=====\n");
     ss->str("");
     int bytes;
+    // read all data in 1023 byte chunks
     while (totalBytes < numOctets)
     {
-        char *buffer = new char[4096];
-        std::fill_n(buffer, 4096, '\0');
+        char *buffer = new char[1024];
+        std::fill_n(buffer, 1024, '\0');
         bytes = SSL_read(ssl, buffer, 1023);
         buffer[bytes] = '\0';
         
         (*ss) << std::string(buffer).substr(0, bytes);
         totalBytes += bytes;
-        // printf("%s", buffer);
         delete [] buffer;
     }
-    // printf("Number of bytes read: %d\n", totalBytes);    
 }
+
 bool postfix_command(int postfixSock, const std::string &command, std::string expectedResponse)
 {
-    // printf("Sending command: %s", command.c_str());
     if (write(postfixSock, command.c_str(), command.size()) < 0)
     {
         perror("write failed");
@@ -135,7 +137,7 @@ bool postfix_command(int postfixSock, const std::string &command, std::string ex
         close(postfixSock);
         return false;
     }
-    // printf("Response: %s", buffer);
+
     // if response code is not as expected
     if (std::string(buffer).find(expectedResponse) == std::string::npos)
     {
@@ -160,7 +162,7 @@ void send_mail(std::string subject)
     struct sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
-    sa.sin_port = htons(25);  // Port number for SMTP
+    sa.sin_port = htons(25);
     if (inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr) <= 0) {
         perror("inet_pton failed");
         close(postfixSock);
@@ -184,7 +186,7 @@ void send_mail(std::string subject)
         close(postfixSock);
         return;
     }
-    printf("\t%s", buffer);
+
     if (std::string(buffer).find("220") == std::string::npos) {
         close(postfixSock);
         return;
@@ -227,7 +229,7 @@ int main()
 {
     signal(SIGINT, sigint_handler);
     std::string host = "pop.gmail.com";
-    // Step 1: Connect to the Gmail POP3 server
+    // Connect to the Gmail POP3 server
     std::cout << "Starting program" << std::endl;
     sock = socket(AF_INET, SOCK_STREAM, 0);
     std::cout << "Socket created: " << sock << std::endl;
@@ -243,7 +245,7 @@ int main()
     }
     std::cout << "Connected to server" << std::endl;
 
-    // Step 2: SSL/TLS Handshake
+    // SSL/TLS Handshake
     int sslinit = SSL_library_init();
     std::cout << "SSL library initialized: " << sslinit << std::endl;
     SSL_CTX *ctx = SSL_CTX_new(SSLv23_client_method());
@@ -259,22 +261,22 @@ int main()
         std::cerr << "SSL_connect failed: " << e.what() << std::endl;
         return 1;
     }
-    // Step 3: POP3 Interaction
-    char buffer[4096];
+    // POP3 Interaction
+    char buffer[1024];
     int bytes;
     std::fill_n(buffer, 1024, 0);
     bytes = SSL_read(ssl, buffer, sizeof(buffer));
     if (!check_ok(buffer, bytes)) {
         error("Error connecting");
     }
-    // printf("=======buffer CONN=======\n%s\n=======NNOC reffub=======\n", buffer);
+
     send_command(ssl, "USER wian.koekemoer123@gmail.com\r\n");
     std::fill_n(buffer, 1024, 0);
     bytes = SSL_read(ssl, buffer, sizeof(buffer));
     if (!check_ok(buffer, bytes)) {
         error("Error sending USER command");
     }
-    // printf("=======buffer USER=======\n%s\n=======reffub=======\n", buffer);
+    // totally legit password, set with -DPASSWORD="\"yourpassword\""
     #ifndef PASSWORD
     #define PASSWORD  "\"googleapppasswrd\""
     #endif
@@ -284,23 +286,18 @@ int main()
     if (!check_ok(buffer, bytes)) {
         error("Error sending PASS command");
     }
-    // printf("=======buffer PASS=======\n%s\n=======reffub=======\n", buffer);
-    // std::cout << "Commands sent" << std::endl;
-    // Step 4: Parse Emails
-    // This is a simplified version. You'll need to add code to parse the email headers and look for the BCC field.
+
+    // Read Emails
     std::cout << "Reading emails" << std::endl;
-    // send_command(ssl, "LIST\r\n");
     send_command(ssl, "STAT\r\n");
-    // getting the number of emails
     int numReads = 0;
     std::fill_n(buffer, 1024, 0);
     bytes = SSL_read(ssl, buffer, sizeof(buffer));
     if (!check_ok(buffer, bytes)) {
         error("Error sending STAT command");
     }
-    printf("=======STAT Response=======\n%s===========================\n", buffer);
-    // std::fill_n(buffer, 1024, 0);
-    // get number of emails in maildrop
+    printf("STAT Response: %s", buffer);
+    // parse number of emails in maildrop
     std::string stat(buffer);
     std::istringstream iss(stat);
     std::string word;
@@ -312,8 +309,9 @@ int main()
         }
         numReads++;
     }
-    std::cout << "Number of emails: " << numEmails << std::endl;
+    std::cout << "Number of new emails: " << numEmails << std::endl;
     for (int i = 1; i <= numEmails; i++) {
+        // send LIST command
         std::string command = "LIST " + std::to_string(i) + "\r\n";
         send_command(ssl, command);
         std::fill_n(buffer, 1024, 0);
@@ -322,7 +320,7 @@ int main()
             break;
         }
         printf("=========Email %d==========\n", i);
-        // get size of message
+        // parse size of message
         iss.str(std::string(buffer));
         numReads = 0;
         int size = 0;
@@ -341,10 +339,9 @@ int main()
         if (!check_ok(buffer, bytes)) {
             break;
         }
-        // get first line from buffer
+        // get first line from buffer and exclude it from message
         std::string tempBuffer(buffer);
         std::stringstream issFirstLine(tempBuffer);
-        // printf("=======buffer RETR %d=======\n%s\n=======RTER reffub=======\n", i, issFirstLine.str().c_str());
         int totalBytes = bytes;
         std::string temp;
         issFirstLine >> temp; // "+OK"
@@ -353,39 +350,35 @@ int main()
         totalBytes -= temp.length() + 1; // sp
         issFirstLine >> temp; // "follows"
         totalBytes -= temp.length() + 2; // cr lf
+
         // copy remaining data to message
         std::stringstream message(std::string(buffer + bytes - totalBytes));
         std::fill_n(buffer, 1024, 0);
         std::string messageStr = message.str();
-        std::stringstream messageCopy(message.str());
         read_message(&message, size, totalBytes);
-        messageCopy << message.str();
-        // messageStr += message.str();
         messageStr.append(message.str());
+
         // find end of head
         int headEnd = messageStr.find("\r\n\r\n");
-        // std::cout << "Head end: " << headEnd << std::endl;
         std::string head = messageStr.substr(0, headEnd);
-        // regex pattern for a string that matches "bcc: wian.koekemoer123@gmail.com" with any number of whitespaces in between
+
+        // regex pattern for a string that matches "bcc: wian.koekemoer123@gmail.com"
         std::regex bccPattern("\\bbcc:\\s+wian\\.koekemoer123@gmail\\.com\\b", std::regex_constants::icase);
         std::sregex_iterator it(head.begin(), head.end() + headEnd, bccPattern);
         std::sregex_iterator itEnd;
         if (it == itEnd) {
             continue;
         }
+        // find subject
         int subjectStart = head.find("Subject: ");
         int subjectEnd = head.find("\r\n", subjectStart);
         std::string originalSubject = head.substr(subjectStart + 9, subjectEnd - subjectStart - 9);
         // if subject already has [BCC Alert] in it, skip
+        // notification emails sent by this program have the recipient as a BCC for some reason
         if (originalSubject.find("[BCC Alert]") != std::string::npos) {
             continue;
         }
-        std::cout << "\tFound BCC field in email " << i << std::endl;\
-        // open file to write email to
-        // std::ofstream emailFile("email" + std::to_string(i) + ".txt");
-        // emailFile << messageStr;
-        // emailFile.close();
-        // find subject
+        std::cout << "\tFound BCC field in email " << i << std::endl;
         std::string subject = "[BCC Alert] " + originalSubject;
         std::cout << "\tSubject: " << subject << std::endl;
         // send email
@@ -394,7 +387,6 @@ int main()
     }
     std::cout << "Finished reading emails" << std::endl;
     
-    // send_command(ssl, "RSET\r\n");
     send_command(ssl, "QUIT\r\n");
     SSL_shutdown(ssl);
     close(sock);
